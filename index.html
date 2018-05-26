@@ -1,0 +1,319 @@
+<html>
+<head>
+</head>
+<body>
+<style>
+#box {
+	position: absolute;
+	width: 50px;
+	height: 50px;
+	background: red;
+}
+
+body {
+	overflow: hidden;
+	font-family: monospace;
+}
+
+canvas {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 760px;
+	height: 640px;
+	background: black;
+	transform: translate(-50%, -50%);
+}
+
+</style>
+
+<canvas id="canvas" resize style="background:black"></canvas>
+<script src="timeliner.js"></script>
+<script type="text/javascript" src="paper/paper-full.js"></script>
+<script>
+
+paper.install(window);
+
+editing = false;
+
+shapes = []
+
+var hitOptions = {
+	segments: true,
+	stroke: true,
+	fill: true,
+	handles: true,
+	tolerance: 5
+};
+
+var target = {
+	Eye1: 0,
+	Eye2: 0,
+	Mouth: 0,
+};
+
+var timeliner = new Timeliner(target,
+function () {
+	editing = false;
+},
+function (ind) {
+	ls = timeliner.getLayers();
+	for (var i=0; i<ls.length; i++) {
+		l = ls[i];
+		l.values.map(function(v, i) {
+			v.value = i;
+		})
+	}
+	timeliner.dispatcher.fire('time.update', timeliner.currentTime());
+},
+function (o) {
+	o.layers.map(function (l, indl) {
+		shape = shapes[indl];
+		if (!shape) return;
+		l.values.map(function (k, indk) {
+			pth = shape.clone({insert: false});
+			pth.importJSON(JSON.stringify(k.shape))
+			k.shape = pth;
+		});
+	})
+	timeliner.dispatcher.fire('time.update', timeliner.currentTime());
+},
+function (indl, k) {
+	k.shape = shapes[indl].clone({insert: false});
+	l = timeliner.getLayer(indl);
+	l.values.map(function(v, i) {
+		v.value = i;
+	})
+	timeliner.dispatcher.fire('time.update', timeliner.currentTime());
+	return k;
+},
+function () {
+	var sav = []
+	shapes.map(function (s) {
+		sav.push(s.exportJSON())
+	})
+	return JSON.stringify(sav)
+},
+function (data) {
+	editing = true;
+	data.map(function (s, ind) {
+		editing = true;
+		shapes[ind].importJSON(s);
+		shapes[ind].onChange()
+		//timeliner.dispatcher.fire('keyframe', timeliner.getLayer(ind), 0);
+	})
+	//editing = false;
+});
+
+timeliner.load({
+	/*
+	"version":"1.5.0",
+	"modified":"Mon Dec 08 2014 10:41:11 GMT+0800 (SGT)",
+	"title":"Untitled",*/
+	"layers":[{
+		"name":"Eye1",
+		"values":[],
+		"tmpValue":3.500023,
+		"_color":"#6ee167"
+	},{
+		"name":"Eye2",
+		"values":[],
+		"tmpValue":-0.5,
+		"_color":"#8bd589"
+	},{
+		"name":"Mouth",
+		"values":[],
+		"tmpValue":-25.700014000000003,
+		"_color":"#2d9f57"
+	}]
+});
+
+function bindTimelineLayer(shape, layer) {
+	shape.frames = []
+	shape._layer = layer
+	shape.onChange = function () {
+		l = timeliner.getLayer(shape._layer)
+		timeliner.dispatcher.fire('value.change', l, 0);
+
+		ind = l.values.findIndex(function (t) {
+			return t.time == timeliner.currentTime();
+		})
+		if (ind != -1) {
+			l.values[ind].shape = shape.clone({insert: false});
+		}
+		l.values.map(function(v, i) {
+			v.value = i;
+		})
+		timeliner.dispatcher.fire('time.update', timeliner.currentTime());
+	};
+	shape.onChange();
+
+	shape.anim = function (factor) {
+		l = timeliner.getLayer(shape._layer)
+		if (l.values.length <= 0) return;
+		ind = l.values.findIndex(function (t) {
+			return t.time > timeliner.currentTime();
+		})
+		if (ind > 0) {
+			//console.log(l.values[ind-1].shape, l.values[ind].shape)
+			shape.interpolate(l.values[ind-1].shape, l.values[ind].shape, factor - ind + 1)
+		} else {
+			if (ind != 0) {
+				ind = l.values.length - 1
+				shape.interpolate(l.values[ind].shape, l.values[ind].shape, 0)
+			} else {
+				shape.interpolate(l.values[ind].shape, l.values[ind].shape, 0)
+			}
+		}
+	}
+
+	return shape;
+}
+
+
+function pointOnCircle(center, radius, theta) {
+	xoff = Math.cos(theta) * radius;
+	yoff = Math.sin(theta) * radius;
+	return new Point(center.x + xoff, center.y + yoff);
+}
+
+
+function makeEye(center, radius) {
+
+	var points = []
+	var arcs = []
+
+	for (var i=0; i<16; i++) {
+		points.push(pointOnCircle(center, radius, i * Math.PI / 8));
+	}
+
+	for (var i=0; i<16; i+=2) {
+		arcs.push(new Path.Arc(points[i], points[(i+1) % 16], points[(i+2) % 16]))
+	}
+
+	for (var i=1; i<8; i++) {
+		arcs[0].lastSegment.handleOut = arcs[i].firstSegment.handleOut
+		arcs[0].add(arcs[i].lastSegment)
+		arcs[i].remove()
+		arcs[i] = null;
+	}
+
+	arcs[0].firstSegment.handleIn = arcs[0].lastSegment.handleIn
+	arcs[0].segments.splice(8, 1);
+
+	arcs[0].closed = true;
+
+	return arcs[0];
+
+}
+
+
+function makeMouth(center, wr, hr) {
+
+	p1 = new Point(center.x + wr, center.y)
+	p2 = new Point(center.x, center.y - hr)
+	p3 = new Point(center.x - wr, center.y)
+	p4 = new Point(center.x, center.y + hr)
+
+	ret = new Path();
+	ret.add(p1);
+	ret.add(p2);
+	ret.add(p3);
+	ret.add(p4);
+
+	ret.closed = true;
+
+	ret.smooth({ type: 'catmull-rom', factor: 0.1 });
+
+	return ret;
+
+}
+
+
+window.onload = function() {
+	// Setup directly from canvas id:
+	paper.setup('canvas');
+	var tool = new Tool();
+
+
+	Eye1 = makeEye(new Point(190, 270), 150);
+	Eye1.fillColor = 'white';
+	Eye1 = bindTimelineLayer(Eye1, 0)
+	shapes.push(Eye1)
+
+	Eye2 = makeEye(new Point(570, 270), 150);
+	Eye2.fillColor = 'white';
+	Eye2 = bindTimelineLayer(Eye2, 1);
+	shapes.push(Eye2)
+
+	Mouth = makeMouth(new Point(380, 430), 60, 35)
+	Mouth.fillColor = 'white';
+	Mouth = bindTimelineLayer(Mouth, 2);
+	shapes.push(Mouth)
+
+	view.onFrame = function(event) {
+		if (!editing) {
+			Eye1.anim(target.Eye1)
+			Eye2.anim(target.Eye2)
+			Mouth.anim(target.Mouth)
+			editing = true;
+		}
+	}
+
+	tool.onMouseDown = function (event) {
+		hitResult = project.hitTest(event.point, hitOptions);
+		Eye1.fullySelected = false;
+		Eye2.fullySelected = false;
+		Mouth.fullySelected = false;
+		if (hitResult) {
+			hitResult.item.fullySelected = true;
+		}
+	}
+
+	tool.onMouseUp = function (event) {
+		editing = false;
+		if (hitResult) {
+			hitResult.item.onChange();
+			hitResult = null;
+		}
+	}
+
+	tool.onMouseDrag = function (event) {
+		editing = true;
+		if (hitResult) {
+			if (hitResult.type == 'fill') {
+				item = hitResult.item;
+				item.position.x += event.delta.x;
+				item.position.y += event.delta.y;
+			} if (hitResult.type == 'segment') {
+				segment = hitResult.segment;
+				segment.point.x += event.delta.x;
+				segment.point.y += event.delta.y;
+			} else if (hitResult.type == 'handle-in') {
+				handle = hitResult.segment.handleIn;
+				handle.x += event.delta.x;
+				handle.y += event.delta.y;
+				if (!Key.isDown('shift')) {
+					otherHandle = hitResult.segment.handleOut;
+					otherHandle.angle = handle.angle + 180
+				}
+			} else if (hitResult.type == 'handle-out') {
+				handle = hitResult.segment.handleOut;
+				handle.x += event.delta.x;
+				handle.y += event.delta.y;
+				if (!Key.isDown('shift')) {
+					otherHandle = hitResult.segment.handleIn;
+					otherHandle.angle = handle.angle + 180
+				}
+			}
+		} else {
+			Eye1.fullySelected = false;
+			Eye2.fullySelected = false;
+			Mouth.fullySelected = false;
+		}
+	}
+
+}
+</script>
+</body>
+</html>
